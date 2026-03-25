@@ -7,5 +7,14 @@ models:
   cc_transactions_lake:
     silver:
       +materialized: table
+      silver_transaction_codes:
+        +materialized: external
+        +file_format: parquet
+        +location: 'data/silver/transaction_codes/data.parquet'
+        +post-hook: >
+          {{ exceptions.raise_compiler_error('invalid debit_credit_indicator')
+             if execute and
+             dbt_utils.get_single_value('SELECT COUNT(*) FROM read_parquet(\'data/silver/transaction_codes/data.parquet\') WHERE debit_credit_indicator NOT IN (\'DR\',\'CR\')')
+             | int > 0 }}
     gold:
       +materialized: table
