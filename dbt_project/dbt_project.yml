@@ -7,6 +7,10 @@ models:
   cc_transactions_lake:
     silver:
       +materialized: table
+      silver_accounts:
+        +materialized: external
+        +file_format: parquet
+        +location: 'data/silver/accounts/data.parquet'
       silver_transaction_codes:
         +materialized: external
         +file_format: parquet
