@@ -35,3 +35,16 @@ def load_bronze_accounts(target_date: str, run_id: str) -> int:
     canonical_path = os.path.join(target_dir, 'data.parquet')
     assert_row_count(canonical_path, row_count)
     return row_count
+
+
+def load_bronze_transaction_codes(run_id: str) -> int:
+    csv_path = 'source/transaction_codes.csv'
+    target_dir = 'data/bronze/transaction_codes'
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Source file not found: {csv_path}")
+    ingested_at = datetime.now(timezone.utc)
+    df = read_csv_source(csv_path)
+    df = add_audit_columns(df, csv_path, run_id, ingested_at)
+    row_count = write_parquet_atomic(df, target_dir, 'data.parquet')
+    assert_row_count('data/bronze/transaction_codes/data.parquet', row_count)
+    return row_count
