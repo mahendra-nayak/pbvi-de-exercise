@@ -1,0 +1,11 @@
+name: cc_transactions_lake
+version: '1.0.0'
+config-version: 2
+profile: cc_transactions_lake
+model-paths: ['models']
+models:
+  cc_transactions_lake:
+    silver:
+      +materialized: table
+    gold:
+      +materialized: table
