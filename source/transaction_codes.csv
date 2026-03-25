@@ -1,0 +1,5 @@
+transaction_code,description,debit_credit_indicator,transaction_type,affects_balance
+PURCH01,Purchase,DR,PURCHASE,true
+PAY01,Payment,CR,PAYMENT,true
+FEE01,Annual Fee,DR,FEE,true
+INT01,Interest Charge,DR,INTEREST,true

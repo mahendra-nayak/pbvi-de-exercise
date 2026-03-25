@@ -1,0 +1,4 @@
+account_id,customer_name,account_status,credit_limit,current_balance,open_date,billing_cycle_start,billing_cycle_end
+ACC-001,Alice Smith,ACTIVE,5000.00,1350.00,2020-01-15,2024-01-01,2024-01-31
+ACC-002,Bob Jones,ACTIVE,3000.00,480.00,2021-06-01,2024-01-01,2024-01-31
+ACC-003,Carol White,ACTIVE,4000.00,1800.00,2022-03-10,2024-01-01,2024-01-31
