@@ -1,0 +1,11 @@
+services:
+  pipeline:
+    build: .
+    image: python:3.11-slim
+    working_dir: /app
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ./source:/app/source:ro
+      - ./data:/app/data
+      - ./:/app
