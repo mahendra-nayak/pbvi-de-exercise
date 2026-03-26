@@ -11,8 +11,8 @@
 |---------|-----------|--------|--------|
 | 3.1 | Silver Transaction Codes Model | DONE | 20fa45a |
 | 3.2 | Silver Accounts Model | DONE |fc5a10b  |
-| 3.3 | Silver Transactions Model | DONE |  |
-| 3.4 | Silver Promotion Verification Baseline | | |
+| 3.3 | Silver Transactions Model | DONE | e834f11 |
+| 3.4 | Silver Promotion Verification Baseline | DONE | pending |
 
 ---
 
