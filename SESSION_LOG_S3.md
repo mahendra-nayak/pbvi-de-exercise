@@ -12,7 +12,7 @@
 | 3.1 | Silver Transaction Codes Model | DONE | 20fa45a |
 | 3.2 | Silver Accounts Model | DONE |fc5a10b  |
 | 3.3 | Silver Transactions Model | DONE | e834f11 |
-| 3.4 | Silver Promotion Verification Baseline | DONE | pending |
+| 3.4 | Silver Promotion Verification Baseline | DONE | 1d520c1 |
 
 ---
 
@@ -45,8 +45,23 @@ Expected: 7 rows, `balanced` = true for all dates.
 
 **Integration Check Result:**
 
+```
+┌────────────┬─────────────┬─────────────┬─────────────────┬──────────┐
+│    date    │ bronze_rows │ silver_rows │ quarantine_rows │ balanced │
+├────────────┼─────────────┼─────────────┼─────────────────┼──────────┤
+│ 2024-01-01 │           5 │           4 │               1 │ true     │
+│ 2024-01-02 │           5 │           4 │               1 │ true     │
+│ 2024-01-03 │           5 │           4 │               1 │ true     │
+│ 2024-01-04 │           5 │           4 │               1 │ true     │
+│ 2024-01-05 │           5 │           4 │               1 │ true     │
+│ 2024-01-06 │           5 │           4 │               1 │ true     │
+│ 2024-01-07 │           5 │           4 │               1 │ true     │
+└────────────┴─────────────┴─────────────┴─────────────────┴──────────┘
+```
+7 rows, `balanced = true` for all dates — PASS
+
 ---
 
 ## Session Sign-Off
-**Engineer sign-off:**
+**Engineer sign-off:** Mahendra Nayak — 2026-03-26
 **PR raised:**
