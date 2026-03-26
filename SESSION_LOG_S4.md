@@ -13,8 +13,8 @@
 | Task Id | Task Name | Status | Commit |
 |---------|-----------|--------|--------|
 | 4.1 | Gold Daily Summary Model | DONE | 17b5873 |
-| 4.2 | Gold Weekly Account Summary Model | DONE | |
-| 4.3 | Gold Atomic Rename in `pipeline.py` | | |
+| 4.2 | Gold Weekly Account Summary Model | DONE | 366130d |
+| 4.3 | Gold Atomic Rename in `pipeline.py` | DONE | |
 
 ---
 

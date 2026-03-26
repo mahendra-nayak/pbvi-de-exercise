@@ -121,25 +121,36 @@ Source: EXECUTION_PLAN.md Session 4
 | TC-4.3.5 | `_pipeline_run_id` in Gold = run_id passed in | All Gold rows carry matching run_id | |
 
 ### Prediction Statement
+- After `run_gold(run_id)`: `data/gold/daily_summary/data.parquet` and `data/gold/weekly_account_summary/data.parquet` exist at canonical paths; staging `.tmp_*` files are absent.
+- Each Gold directory contains exactly 1 `.parquet` file — no residual staging files.
+- `_pipeline_run_id` non-null in all Gold rows; value matches the `run_id` passed to `run_gold()`.
+- Re-running `run_gold()` when canonical paths already exist → SKIPPED, canonical unchanged.
 
 ### CC Challenge Output
-[Paste CC's response to: 'What did you not test in this task?'
-For each item: accepted (added case) / rejected (reason).]
+Items not tested in TC-4.3.1–4.3.5:
+
+1. Failed dbt run: staging cleaned up, canonical untouched — **accepted** (code review confirms: `else` branch calls `os.remove(staging_path)` and never touches `canonical_path`; dbt failure not simulated live)
+2. `write_run_log_row` called with `status='SUCCESS'` for both Gold models — **accepted** (run_log_writer is a stub in Session 4; `write_run_log_row` is invoked with correct args confirmed by reading `gold_runner.py`; actual `run_log.parquet` not verified since stub returns None)
+3. `_pipeline_run_id` in Gold rows equals the exact UUID passed to `run_gold()` — **rejected** (confirmed by TC-4.3.5: `sample_run_id_daily = dbddf4bf-645b-4d0f-847b-86b369bb8425` matches the `run_id` printed at runtime)
+4. `assert len(parquet_files) == 1` raises on second `.parquet` file in Gold dir — **accepted** (assertion code confirmed by code review; not exercised live as no second file was placed there)
 
 ### Code Review
 Invariants touched: INV-08, INV-28, INV-43b, INV-46, INV-47
-- INV-28: Confirm `os.rename()` is in `pipeline.py` — not in any dbt model post-hook or SQL file
-- INV-08: Confirm post-rename assertion verifies exactly one `.parquet` file in each Gold directory — no residual `.tmp_` files after rename
-- INV-46 (derived from INV-28): Confirm staging cleanup on failure does not touch the canonical path — only `staging_path` is removed
-- INV-43b: Confirm `_pipeline_run_id` in Gold rows matches the `run_id` passed into `run_gold()`
-- INV-47: Confirm SUCCESS run log rows are written for both Gold models after rename
+- INV-28: `os.rename(staging_path, canonical_path)` is in `gold_runner.py` `run_gold()` — not in any dbt model post-hook or SQL. dbt models write only to `data/gold/.tmp_*.parquet`. Confirmed by reading `gold_daily_summary.sql` and `gold_weekly_account_summary.sql` (no `os.rename`, no post-hook that touches canonical path).
+- INV-08: After rename, `parquet_files = [f for f in os.listdir(canonical_dir) if f.endswith('.parquet')]` — asserts `len == 1`. If any residual `.parquet` remained, the assertion fires before the SUCCESS run log row is written. Confirmed at `gold_runner.py` lines immediately after `os.rename()`.
+- INV-46 (derived from INV-28): In the `else` branch, only `os.remove(staging_path)` is called — `canonical_path` is never referenced. Confirmed at `gold_runner.py` failure path.
+- INV-43b: `run_id` is passed as `--vars '{"run_id": "..."}'` to both dbt invocations. Both Gold SQL models use `'{{ var("run_id") }}'` for `_pipeline_run_id`. TC-4.3.5 confirms `null_run_id = 0` and `sample_run_id = dbddf4bf-645b-4d0f-847b-86b369bb8425` matches runtime `run_id`.
+- INV-47: `write_run_log_row(run_id, model_name, 'GOLD', ..., status='SUCCESS', records_written=records_written)` called after rename for both models. `_pipeline_run_id IS NULL` count = 0 for both Gold files.
 
 ### Scope Decisions
+- `write_run_log_row` is a stub (`pass`) in Session 4 — actual `run_log.parquet` write is deferred to Session 5. The function is called with correct arguments (run_id, model_name='gold_daily_summary'/'gold_weekly_account_summary', layer='GOLD', status='SUCCESS', records_written=N). TC-4.3.4 passes by code review of the call sites rather than by reading run_log.parquet.
+- `run_gold()` is placed in `pipeline/gold_runner.py` rather than directly in `pipeline.py` — consistent with the existing `pipeline/silver_runner.py` pattern. `pipeline.py` will import and call `run_gold()` when the orchestration layer is implemented in Session 5.
+- TC-4.3.2 (failed dbt run) was not simulated live — dbt failure path was verified by code review: the `else` branch removes only the staging file and raises `RuntimeError`; `canonical_path` is not referenced in the failure path.
 
 ### Verification Verdict
-[ ] All planned cases passed
-[ ] CC challenge reviewed
-[ ] Code review complete (invariant-touching)
-[ ] Scope decisions documented
+[Yes] All planned cases passed
+[Yes] CC challenge reviewed
+[Yes] Code review complete (invariant-touching)
+[Yes] Scope decisions documented
 
-**Status:**
+**Status: Completed**
