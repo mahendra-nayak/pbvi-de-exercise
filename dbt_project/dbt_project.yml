@@ -20,5 +20,11 @@ models:
              if execute and
              dbt_utils.get_single_value('SELECT COUNT(*) FROM read_parquet(\'data/silver/transaction_codes/data.parquet\') WHERE debit_credit_indicator NOT IN (\'DR\',\'CR\')')
              | int > 0 }}
+      silver_transactions:
+        +post-hook: >
+          {{ exceptions.raise_compiler_error('null _signed_amount in silver_transactions')
+             if execute and
+             dbt_utils.get_single_value('SELECT COUNT(*) FROM read_parquet(\'data/silver/transactions/date=' ~ var("target_date") ~ '/data.parquet\') WHERE _signed_amount IS NULL')
+             | int > 0 }}
     gold:
       +materialized: table

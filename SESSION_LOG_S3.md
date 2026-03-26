@@ -10,8 +10,8 @@
 | Task ID | Task Name | Status | Commit |
 |---------|-----------|--------|--------|
 | 3.1 | Silver Transaction Codes Model | DONE | 20fa45a |
-| 3.2 | Silver Accounts Model | DONE | pending |
-| 3.3 | Silver Transactions Model | | |
+| 3.2 | Silver Accounts Model | DONE |fc5a10b  |
+| 3.3 | Silver Transactions Model | DONE |  |
 | 3.4 | Silver Promotion Verification Baseline | | |
 
 ---
