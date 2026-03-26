@@ -28,3 +28,11 @@ models:
              | int > 0 }}
     gold:
       +materialized: table
+      gold_daily_summary:
+        +materialized: external
+        +file_format: parquet
+        +location: 'data/gold/.tmp_daily_summary.parquet'
+      gold_weekly_account_summary:
+        +materialized: external
+        +file_format: parquet
+        +location: 'data/gold/.tmp_weekly_account_summary.parquet'
