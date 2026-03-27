@@ -4,6 +4,7 @@ import signal
 import sys
 import time
 import uuid
+from datetime import datetime
 
 PID_FILE = 'data/pipeline/pipeline.pid'
 
@@ -62,7 +63,20 @@ def main():
         elif args.incremental:
             print(f"[incremental] run_id={run_id} (not yet implemented)")
         elif args.reset_watermark:
-            print(f"[reset-watermark] run_id={run_id} (not yet implemented)")
+            from pipeline.control import read_watermark, write_watermark
+            if not args.confirm:
+                print("Error: --confirm required for --reset-watermark", file=sys.stderr)
+                sys.exit(1)
+            prior = read_watermark()
+            print(f"Current watermark: {prior or 'none'}")
+            try:
+                target = datetime.strptime(args.reset_watermark, '%Y-%m-%d').date()
+            except ValueError:
+                print(f"Error: invalid date '{args.reset_watermark}'", file=sys.stderr)
+                sys.exit(1)
+            write_watermark(target, 'manual-reset')
+            print(f"Watermark reset to {target}")
+            raise SystemExit(0)
         else:
             parser.print_help()
 

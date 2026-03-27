@@ -13,8 +13,8 @@
 | Task Id | Task Name | Status | Commit |
 |---------|-----------|--------|--------|
 | 5.1 | PID File Lifecycle | DONE |65c2480 |
-| 5.2 | Run Log Writer and `pipeline/run_log.py` | DONE | |
-| 5.3 | Watermark Control and `--reset-watermark` | | |
+| 5.2 | Run Log Writer and `pipeline/run_log.py` | DONE | 2b0639c|
+| 5.3 | Watermark Control and `--reset-watermark` | DONE | |
 | 5.4 | Historical and Incremental Pipeline Orchestration | | |
 | 5.5 | Phase 8 Sign-Off Verification | | |
 
