@@ -88,7 +88,13 @@ def run_historical(start_date: str, end_date: str, run_id: str) -> None:
         run_silver_accounts(date_str, run_id)
         run_silver_transactions(date_str, run_id)
 
-        # Gold — full recompute
+        # Gold — delete prior canonical so run_gold recomputes over all Silver
+        # data accumulated so far (Gold reads all Silver partitions, not just
+        # the current date). Without this, gold_runner skips after the first date.
+        from pipeline.gold_runner import GOLD_MODELS
+        for _, (_, canonical_path) in GOLD_MODELS.items():
+            if os.path.exists(canonical_path):
+                os.remove(canonical_path)
         run_gold(run_id)
 
         # Watermark advances only after Gold succeeds (INV-33)

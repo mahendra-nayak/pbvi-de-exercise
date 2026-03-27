@@ -15,8 +15,8 @@
 | 5.1 | PID File Lifecycle | DONE |65c2480 |
 | 5.2 | Run Log Writer and `pipeline/run_log.py` | DONE | 2b0639c|
 | 5.3 | Watermark Control and `--reset-watermark` | DONE |142f715 |
-| 5.4 | Historical and Incremental Pipeline Orchestration | DONE | |
-| 5.5 | Phase 8 Sign-Off Verification | | |
+| 5.4 | Historical and Incremental Pipeline Orchestration | DONE |950e65a |
+| 5.5 | Phase 8 Sign-Off Verification | DONE | |
 
 ---
 
