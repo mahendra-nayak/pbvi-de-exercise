@@ -63,37 +63,51 @@ Source: EXECUTION_PLAN.md Session 5
 
 | Case | Scenario | Expected | Result |
 |------|----------|----------|--------|
-| TC-5.2.1 | First write creates file with 1 row | `read_parquet(RUN_LOG_PATH)` has 1 row | |
-| TC-5.2.2 | Second write appends, not overwrites | File has 2 rows, both present | |
-| TC-5.2.3 | error_message required on FAILED | ValueError raised | |
-| TC-5.2.4 | error_message forbidden on SUCCESS | ValueError raised | |
-| TC-5.2.5 | Filesystem path stripped from error | No '/' substring in output | |
-| TC-5.2.6 | Truncation at 500 chars | Output ≤ 500 chars, ends with '[truncated]' | |
-| TC-5.2.7 | records_rejected forbidden on BRONZE layer | ValueError raised | |
-| TC-5.2.8 | Atomic write: temp in same dir as canonical | `.tmp_run_log.parquet` in `data/pipeline/` | |
+| TC-5.2.1 | First write creates file with 1 row | `read_parquet(RUN_LOG_PATH)` has 1 row | PASS — `rows=1`, `model=bronze_transactions`, `status=SUCCESS` |
+| TC-5.2.2 | Second write appends, not overwrites | File has 2 rows, both present | PASS — `rows=2`, `models=['bronze_transactions', 'silver_transactions']` |
+| TC-5.2.3 | error_message required on FAILED | ValueError raised | PASS — `ValueError: error_message is required when status is FAILED` |
+| TC-5.2.4 | error_message forbidden on SUCCESS | ValueError raised | PASS — `ValueError: error_message must be None when status is 'SUCCESS'` |
+| TC-5.2.5 | Filesystem path stripped from error | No '/' substring in output | PASS — `cleaned='dbt failed at  line 42'`, `has_slash=False` |
+| TC-5.2.6 | Truncation at 500 chars | Output ≤ 500 chars, ends with '[truncated]' | PASS — `len=500`, `ends_truncated=True` |
+| TC-5.2.7 | records_rejected forbidden on BRONZE layer | ValueError raised | PASS — `ValueError: records_rejected is only permitted for SILVER layer rows` |
+| TC-5.2.8 | Atomic write: temp in same dir as canonical | `.tmp_run_log.parquet` in `data/pipeline/` | PASS — `temp_path=data/pipeline/.tmp_run_log.parquet`, `existed_before_replace=True` |
 
 ### Prediction Statement
+- First `write_run_log_row` call: no existing file → `combined = new_row` → write to temp → replace canonical → 1-row file.
+- Second call: reads existing 1-row file → concat → 2-row file written atomically.
+- `status='FAILED'` with `error_message=None` raises `ValueError` before any DataFrame work — validation is the first block in the function.
+- `status='SUCCESS'` with `error_message` set raises `ValueError` — only `FAILED` status permits a non-null error message.
+- `sanitise_error` strips all `/\S*` matches (filesystem paths) before truncation; 600-char input → 500-char output ending with `[truncated]`.
+- `records_rejected` on a non-SILVER layer raises `ValueError`.
+- Temp file is `data/pipeline/.tmp_run_log.parquet` — same directory as canonical; `os.replace` atomically overwrites the canonical on success.
 
 ### CC Challenge Output
-[Paste CC's response to: 'What did you not test in this task?'
-For each item: accepted (added case) / rejected (reason).]
+1. `SKIPPED` status with `error_message=None` — not separately tested; identical validation path as `SUCCESS`. **Accepted** (code path is `status != 'FAILED' and error_message is not None` — covers both SUCCESS and SKIPPED).
+2. Invalid `pipeline_type` (e.g. `'incremental'` lowercase) raises `ValueError` — not live-tested. **Accepted** (frozenset membership check is the first validation line; code review confirms).
+3. Invalid `layer` raises `ValueError` — not live-tested. **Accepted** (same frozenset pattern as pipeline_type).
+4. `sanitise_error` with input that has no `/` — returns input unchanged (up to max_chars). **Accepted** (regex substitution produces no change when no match; not exercised).
+5. `sanitise_error` with input that is entirely a path (e.g. `/app/run.py`) — result is `'unknown error'` due to `or 'unknown error'` fallback. **Accepted** (code review confirms the `or 'unknown error'` guard).
+6. `os.replace` used instead of `os.rename` — not in original task prompt. **Accepted** (scope decision: `os.rename` raises `FileExistsError` on Windows when destination exists; `os.replace` is atomic on Linux and correct on Windows).
 
 ### Code Review
-Invariants touched: INV-37, INV-37b, INV-39, INV-40b
-- INV-37: Confirm atomic append uses `os.rename(TEMP_LOG_PATH, RUN_LOG_PATH)` — not `to_parquet(RUN_LOG_PATH)` directly
-- INV-37b: Confirm temp path is `data/pipeline/.tmp_run_log.parquet` — same directory as canonical, no `/tmp` usage
-- INV-39: Confirm FAILED/error_message validation raises before any DataFrame construction
-- INV-40b: Confirm `pipeline_type` and `layer` are validated against frozensets before write
+Invariants touched: INV-37, INV-37b, INV-39, INV-39b, INV-40b
+- INV-37: Atomic append sequence in `write_run_log_row`: read existing → `pd.concat` → `to_parquet(TEMP_LOG_PATH)` → `os.replace(TEMP_LOG_PATH, RUN_LOG_PATH)`. Never writes directly to `RUN_LOG_PATH`. Confirmed at `run_log.py:63–70`.
+- INV-37b: `TEMP_LOG_PATH = 'data/pipeline/.tmp_run_log.parquet'` — dot-prefixed, same directory as `RUN_LOG_PATH = 'data/pipeline/run_log.parquet'`. No `/tmp` or `tempfile` usage anywhere in file. Confirmed by TC-5.2.8: `temp_path=data/pipeline/.tmp_run_log.parquet`.
+- INV-39: All six validation checks (`pipeline_type`, `layer`, `status`, FAILED/error_message, SUCCESS/error_message, non-SILVER/records_rejected) are `if` statements at lines 38–46, before `pd.DataFrame([{...}])` at line 48. Confirmed at `run_log.py:38–46`. TC-5.2.3, TC-5.2.4, TC-5.2.7 all confirm `ValueError` raised without any file being written.
+- INV-39b: `records_rejected` validation at line 46 (`if layer != 'SILVER' and records_rejected is not None`) ensures only quarantine-count rows (hard rejections) can carry this field. `_is_resolvable=false` records are not quarantined and thus not counted here. Confirmed by TC-5.2.7.
+- INV-40b: `pipeline_type in VALID_PIPELINE_TYPES` and `layer in VALID_LAYERS` checks at lines 38–41 use `frozenset` membership — not free-form string comparison. `VALID_PIPELINE_TYPES = frozenset({'HISTORICAL', 'INCREMENTAL'})`, `VALID_LAYERS = frozenset({'BRONZE', 'SILVER', 'GOLD'})`. Confirmed at `run_log.py:7–9`.
 
 ### Scope Decisions
+- `os.replace` used instead of `os.rename` — `os.rename` raises `FileExistsError` on Windows when the destination already exists. `os.replace` is POSIX-atomic on Linux (the operational target) and also handles the overwrite case on Windows. Behaviour is identical on Linux; this is purely a cross-platform correctness fix.
+- `pipeline_type` defaults to `'HISTORICAL'` in the function signature — callers in `silver_runner.py` that were written before the parameter existed do not pass it. Default ensures backward compatibility without changing caller code.
 
 ### Verification Verdict
-[ ] All planned cases passed
-[ ] CC challenge reviewed
-[ ] Code review complete (invariant-touching)
-[ ] Scope decisions documented
+[Yes] All planned cases passed (live)
+[Yes] CC challenge reviewed
+[Yes] Code review complete (INV-37, INV-37b, INV-39, INV-39b, INV-40b)
+[Yes] Scope decisions documented
 
-**Status:**
+**Status: Completed**
 
 ---
 
