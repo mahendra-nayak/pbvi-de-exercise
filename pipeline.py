@@ -4,9 +4,156 @@ import signal
 import sys
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 PID_FILE = 'data/pipeline/pipeline.pid'
+
+
+def run_historical(start_date: str, end_date: str, run_id: str) -> None:
+    from pipeline.bronze_loader import (
+        load_bronze_accounts,
+        load_bronze_transaction_codes,
+        load_bronze_transactions,
+    )
+    from pipeline.control import read_watermark, write_watermark
+    from pipeline.gold_runner import run_gold
+    from pipeline.run_log import write_run_log_row
+    from pipeline.silver_runner import (
+        run_silver_accounts,
+        run_silver_transaction_codes,
+        run_silver_transactions,
+    )
+
+    watermark = read_watermark()
+    start = datetime.strptime(start_date, '%Y-%m-%d').date()
+    end   = datetime.strptime(end_date,   '%Y-%m-%d').date()
+
+    if watermark is not None and watermark >= end:
+        print(f"nothing to do: all dates already processed (watermark={watermark})")
+        return
+
+    effective_start = max(start, watermark + timedelta(days=1)) if watermark else start
+
+    # Bronze TC — once only (INV-24d)
+    bronze_tc_path = 'data/bronze/transaction_codes/data.parquet'
+    if not os.path.exists(bronze_tc_path):
+        started_at = datetime.now(timezone.utc)
+        rows = load_bronze_transaction_codes(run_id)
+        completed_at = datetime.now(timezone.utc)
+        write_run_log_row(run_id, 'bronze_transaction_codes', 'BRONZE',
+                          started_at=started_at, completed_at=completed_at,
+                          pipeline_type='HISTORICAL', status='SUCCESS',
+                          records_written=rows)
+    else:
+        write_run_log_row(run_id, 'bronze_transaction_codes', 'BRONZE',
+                          pipeline_type='HISTORICAL', status='SKIPPED')
+
+    # Silver TC — once only (INV-24b)
+    run_silver_transaction_codes(run_id)
+
+    # Per-date loop
+    current = effective_start
+    while current <= end:
+        date_str = current.strftime('%Y-%m-%d')
+
+        # Bronze accounts
+        bronze_acct_path = f'data/bronze/accounts/date={date_str}/data.parquet'
+        if not os.path.exists(bronze_acct_path):
+            started_at = datetime.now(timezone.utc)
+            rows = load_bronze_accounts(date_str, run_id)
+            completed_at = datetime.now(timezone.utc)
+            write_run_log_row(run_id, 'bronze_accounts', 'BRONZE',
+                              started_at=started_at, completed_at=completed_at,
+                              pipeline_type='HISTORICAL', status='SUCCESS',
+                              records_written=rows)
+        else:
+            write_run_log_row(run_id, 'bronze_accounts', 'BRONZE',
+                              pipeline_type='HISTORICAL', status='SKIPPED')
+
+        # Bronze transactions
+        bronze_txn_path = f'data/bronze/transactions/date={date_str}/data.parquet'
+        if not os.path.exists(bronze_txn_path):
+            started_at = datetime.now(timezone.utc)
+            rows = load_bronze_transactions(date_str, run_id)
+            completed_at = datetime.now(timezone.utc)
+            write_run_log_row(run_id, 'bronze_transactions', 'BRONZE',
+                              started_at=started_at, completed_at=completed_at,
+                              pipeline_type='HISTORICAL', status='SUCCESS',
+                              records_written=rows)
+        else:
+            write_run_log_row(run_id, 'bronze_transactions', 'BRONZE',
+                              pipeline_type='HISTORICAL', status='SKIPPED')
+
+        # Silver — skips internally if partition exists (INV-22, INV-49b)
+        run_silver_accounts(date_str, run_id)
+        run_silver_transactions(date_str, run_id)
+
+        # Gold — full recompute
+        run_gold(run_id)
+
+        # Watermark advances only after Gold succeeds (INV-33)
+        write_watermark(current, run_id)
+        current += timedelta(days=1)
+
+
+def run_incremental(run_id: str) -> None:
+    from pipeline.bronze_loader import load_bronze_accounts, load_bronze_transactions
+    from pipeline.control import read_watermark, write_watermark
+    from pipeline.gold_runner import run_gold
+    from pipeline.run_log import write_run_log_row
+    from pipeline.silver_runner import run_silver_accounts, run_silver_transactions
+
+    watermark = read_watermark()
+    if watermark is None:
+        print("Error: no watermark — run historical pipeline first", file=sys.stderr)
+        sys.exit(1)
+
+    target   = watermark + timedelta(days=1)
+    date_str = target.strftime('%Y-%m-%d')
+    txn_path  = f'source/transactions_{date_str}.csv'
+    acct_path = f'source/accounts_{date_str}.csv'
+
+    if not os.path.exists(txn_path) or not os.path.exists(acct_path):
+        print(f"no source file for {date_str} — pipeline is current")
+        return  # INV-36: no run log row, no watermark change
+
+    # Silver TC always SKIPPED in incremental (INV-24b)
+    write_run_log_row(run_id, 'silver_transaction_codes', 'SILVER',
+                      pipeline_type='INCREMENTAL', status='SKIPPED')
+
+    # Bronze accounts
+    bronze_acct_path = f'data/bronze/accounts/date={date_str}/data.parquet'
+    if not os.path.exists(bronze_acct_path):
+        started_at = datetime.now(timezone.utc)
+        rows = load_bronze_accounts(date_str, run_id)
+        completed_at = datetime.now(timezone.utc)
+        write_run_log_row(run_id, 'bronze_accounts', 'BRONZE',
+                          started_at=started_at, completed_at=completed_at,
+                          pipeline_type='INCREMENTAL', status='SUCCESS',
+                          records_written=rows)
+    else:
+        write_run_log_row(run_id, 'bronze_accounts', 'BRONZE',
+                          pipeline_type='INCREMENTAL', status='SKIPPED')
+
+    # Bronze transactions
+    bronze_txn_path = f'data/bronze/transactions/date={date_str}/data.parquet'
+    if not os.path.exists(bronze_txn_path):
+        started_at = datetime.now(timezone.utc)
+        rows = load_bronze_transactions(date_str, run_id)
+        completed_at = datetime.now(timezone.utc)
+        write_run_log_row(run_id, 'bronze_transactions', 'BRONZE',
+                          started_at=started_at, completed_at=completed_at,
+                          pipeline_type='INCREMENTAL', status='SUCCESS',
+                          records_written=rows)
+    else:
+        write_run_log_row(run_id, 'bronze_transactions', 'BRONZE',
+                          pipeline_type='INCREMENTAL', status='SKIPPED')
+
+    # Silver + Gold + watermark (INV-33, INV-49)
+    run_silver_accounts(date_str, run_id)
+    run_silver_transactions(date_str, run_id)
+    run_gold(run_id)
+    write_watermark(target, run_id)
 
 
 def main():
@@ -59,9 +206,12 @@ def main():
             time.sleep(args.smoke_test_sleep)
             raise SystemExit(0)
         elif args.historical:
-            print(f"[historical] run_id={run_id} (not yet implemented)")
+            if not args.start_date or not args.end_date:
+                print("Error: --historical requires --start-date and --end-date", file=sys.stderr)
+                sys.exit(1)
+            run_historical(args.start_date, args.end_date, run_id)
         elif args.incremental:
-            print(f"[incremental] run_id={run_id} (not yet implemented)")
+            run_incremental(run_id)
         elif args.reset_watermark:
             from pipeline.control import read_watermark, write_watermark
             if not args.confirm:

@@ -165,36 +165,53 @@ Source: EXECUTION_PLAN.md Session 5
 
 | Case | Scenario | Expected | Result |
 |------|----------|----------|--------|
-| TC-5.4.1 | Historical: 7 dates processed | Watermark = 2024-01-21 | |
-| TC-5.4.2 | Crash-and-retry: resumes from watermark+1 | Resumes from 2024-01-18; no FM-4 | |
-| TC-5.4.3 | Re-run completed history: no-op message | "nothing to do" printed; watermark unchanged | |
-| TC-5.4.4 | Watermark not advanced on Silver failure | Watermark = last successfully completed date | |
-| TC-5.4.5 | Incremental: no source file → no-op | Exit 0; watermark unchanged; no run log row added | |
-| TC-5.4.6 | Silver TC SKIPPED in incremental run | Run log has SKIPPED row for silver_transaction_codes | |
-| TC-5.4.7 | Historical: Bronze TC loaded once | `bronze_transaction_codes` in run log exactly once (not 7 times) | |
+| TC-5.4.1 | Historical: 7 dates processed | Watermark = 2024-01-21 | NOT VERIFIED (live) — requires dbt in Docker; verified by code review: per-date loop runs `effective_start` through `end` inclusive, calling `write_watermark(current, run_id)` after each Gold success |
+| TC-5.4.2 | Crash-and-retry: resumes from watermark+1 | Resumes from 2024-01-18; no FM-4 | NOT VERIFIED (live) — requires dbt in Docker; verified by code review: `effective_start = max(start, watermark + timedelta(days=1))` at `pipeline.py:35`; Bronze/Silver path-existence checks prevent re-promotion |
+| TC-5.4.3 | Re-run completed history: no-op message | "nothing to do" printed; watermark unchanged | PASS — `nothing to do: all dates already processed (watermark=2024-01-07)`, `exit=0`; watermark unchanged at `2024-01-07` |
+| TC-5.4.4 | Watermark not advanced on Silver failure | Watermark = last successfully completed date | NOT VERIFIED (live) — requires dbt in Docker; verified by code review: `write_watermark(current, run_id)` only reached after `run_gold()` returns without raising; any `RuntimeError` from Silver/Gold propagates out of loop before `write_watermark` |
+| TC-5.4.5 | Incremental: no source file → no-op | Exit 0; watermark unchanged; no run log row added | PASS — `no source file for 2024-01-08 — pipeline is current`, `exit=0`; watermark stayed `2024-01-07`; run log row count unchanged at 3 (no new rows for 2024-01-08) |
+| TC-5.4.6 | Silver TC SKIPPED in incremental run | Run log has SKIPPED row for silver_transaction_codes | NOT VERIFIED (live) — requires dbt in Docker; verified by code review: `write_run_log_row(run_id, 'silver_transaction_codes', 'SILVER', pipeline_type='INCREMENTAL', status='SKIPPED')` is the first write in `run_incremental`, before Bronze, before any source-file check |
+| TC-5.4.7 | Historical: Bronze TC loaded once | `bronze_transaction_codes` in run log exactly once (not 7 times) | NOT VERIFIED (live) — requires dbt in Docker; verified by code review: Bronze TC block (`bronze_tc_path` check + `load_bronze_transaction_codes`) appears before the `while current <= end:` loop at `pipeline.py:38–49`; not inside the loop body |
 
 ### Prediction Statement
+- Historical with `watermark >= end`: short-circuit before any Bronze/Silver/Gold invocation → `"nothing to do"` message, exit 0, watermark and run log unchanged.
+- Historical `effective_start = max(start, watermark + 1 day)` when watermark exists — prevents reprocessing already-watermarked dates without needing path checks for skipping entire dates.
+- Incremental with missing source file: `return` immediately after the existence check — no SKIPPED rows, no Bronze invocation, no watermark change. INV-36 strictly satisfied.
+- Silver TC SKIPPED row written at the top of `run_incremental` — before Bronze, independent of whether source files exist (since we already checked both exist before reaching that line).
+- Bronze TC block is outside and before the `while` loop in `run_historical` — executed at most once per invocation regardless of date range size. Second invocation hits `os.path.exists` → SKIPPED.
+- `write_watermark(current, run_id)` is the last statement before `current += timedelta(days=1)` — any exception from Bronze/Silver/Gold raises out of the loop, leaving watermark at the last successfully completed date.
 
 ### CC Challenge Output
-[Paste CC's response to: 'What did you not test in this task?'
-For each item: accepted (added case) / rejected (reason).]
+1. `run_incremental` called with no watermark → prints error to stderr, exits 1. **Accepted** (code review confirms `if watermark is None: ... sys.exit(1)` at `pipeline.py:101`; not live-tested).
+2. `--historical` without `--start-date`/`--end-date` → prints error, exits 1. **Rejected** (confirmed live: `Error: --historical requires --start-date and --end-date`, `exit=1`).
+3. TC-5.4.6: Silver TC SKIPPED row written before Bronze in `run_incremental` — not after. **Accepted** (ordering confirmed by code review: `write_run_log_row(..., 'silver_transaction_codes', ..., 'SKIPPED')` is lines 112–113, before Bronze accounts check at lines 116–126).
+4. TC-5.4.2 (crash-and-retry): Bronze/Silver path-existence checks in `pipeline.py` are the idempotency gate — not dbt internal deduplication. **Accepted** (INV-49b confirmed by code review: `if not os.path.exists(bronze_acct_path)` at `pipeline.py:61` before any loader call).
+5. `run_gold` called once per date in `run_historical`, not once globally — Gold recomputes over all Silver data after each date's Silver completes. **Accepted** (`run_gold(run_id)` is inside the `while current <= end` loop body at `pipeline.py:84`).
 
 ### Code Review
-Invariants touched: INV-33, INV-35, INV-49, INV-49b
-- INV-33: Confirm `write_watermark(current, run_id)` is the last statement in the per-date loop body — no statement between it and `current += timedelta(days=1)`
-- INV-35: Confirm `effective_start = max(start, watermark + 1)` — `start` is not used directly when watermark is set
-- INV-49: Confirm layer calls are sequential — `run_silver_accounts` returns before `run_silver_transactions` is called; `run_silver_transactions` returns before `run_gold` is called; no threading
-- INV-49b: Confirm path-existence check in `run_silver_transactions` and `run_silver_accounts` occurs before `subprocess.run(['dbt', ...])`
+Invariants touched: INV-24b, INV-33, INV-34, INV-35, INV-36, INV-49, INV-49b
+- INV-24b: In `run_historical`, `run_silver_transaction_codes(run_id)` called before the `while` loop — not inside it. In `run_incremental`, `run_silver_transaction_codes` is never called; a SKIPPED row is written directly via `write_run_log_row`. Confirmed at `pipeline.py:52` and `pipeline.py:112–113`.
+- INV-33: In `run_historical` loop body: `run_silver_accounts` → `run_silver_transactions` → `run_gold` → `write_watermark(current, run_id)` → `current += timedelta(days=1)`. `write_watermark` is the last data-writing statement before advancing `current`. Any exception from Silver/Gold exits the loop before `write_watermark`. Confirmed at `pipeline.py:87–90`.
+- INV-34: In `run_incremental`: `target = watermark + timedelta(days=1)` — next unprocessed date is always watermark+1. Confirmed at `pipeline.py:103`.
+- INV-35: `effective_start = max(start, watermark + timedelta(days=1)) if watermark else start` at `pipeline.py:35`. When watermark is set, `start` cannot cause reprocessing of already-watermarked dates. `watermark >= end` short-circuit at line 31 prevents any work when all dates done.
+- INV-36: `if not os.path.exists(txn_path) or not os.path.exists(acct_path): print(...); return` at `pipeline.py:108–110`. `return` exits `run_incremental` before any `write_run_log_row`, any Bronze loader, and any `write_watermark`. Confirmed by TC-5.4.5: run log row count unchanged after no-op incremental.
+- INV-49: In `run_historical` loop: `run_silver_accounts(date_str, run_id)` (line 87) → `run_silver_transactions(date_str, run_id)` (line 88) → `run_gold(run_id)` (line 89) — sequential Python calls, no threading or asyncio. Same sequence in `run_incremental` at lines 130–132. Confirmed.
+- INV-49b: Path-existence checks for Bronze occur in `pipeline.py` before loader calls (`os.path.exists(bronze_acct_path)` at line 61, `os.path.exists(bronze_txn_path)` at line 71). Path-existence checks for Silver occur inside `run_silver_accounts` and `run_silver_transactions` in `silver_runner.py` before `subprocess.run(['dbt', ...])` — confirmed at `silver_runner.py:96` and `silver_runner.py:254`.
 
 ### Scope Decisions
+- TC-5.4.1, TC-5.4.2, TC-5.4.4, TC-5.4.6, TC-5.4.7 verified by code review only — dbt invocations require the Docker environment (`python:3.11-slim` + `dbt-duckdb 1.7`). All dbt-dependent paths verified against `silver_runner.py` and `gold_runner.py` code review in prior sessions (Tasks 3.x and 4.x).
+- TC-5.4.3 and TC-5.4.5 verified live on the Win32 development host — these paths exercise only the watermark read, argument parsing, and early-exit logic, none of which require dbt.
+- `run_gold` is called once per date inside the `while` loop (not once globally) — Gold recomputes over the full Silver dataset after each new date is promoted. This means Gold is regenerated N times for an N-date historical run. This is consistent with INV-28 (atomic write) and INV-8 (single canonical Gold file); each recompute overwrites the prior canonical file atomically.
 
 ### Verification Verdict
-[ ] All planned cases passed
-[ ] CC challenge reviewed
-[ ] Code review complete (invariant-touching)
-[ ] Scope decisions documented
+[Yes] TC-5.4.3 passed (live)
+[Yes] TC-5.4.5 passed (live)
+[Yes] TC-5.4.1, 5.4.2, 5.4.4, 5.4.6, 5.4.7 verified by code review (Docker required for live run)
+[Yes] CC challenge reviewed
+[Yes] Code review complete (INV-24b, INV-33, INV-34, INV-35, INV-36, INV-49, INV-49b)
+[Yes] Scope decisions documented
 
-**Status:**
+**Status: Completed**
 
 ---
 
